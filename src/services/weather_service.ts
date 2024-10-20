@@ -4,45 +4,84 @@ import { CurrentWeatherResponse, WeatherAPIError, BadRequestError, UnauthorizedE
 import https from 'https';
 import weatherQueue from './weatherQueue';
 import async from 'async';
-import { processTicketsPool } from '../db';
-import retry from 'retry'; // Importar retry
-import pgp from 'pg-promise'; 
+import retry from 'retry';
+import pgPromise from 'pg-promise';
 
-// Cola para las inserciones en la base de datos
-export const insertionQueue = async.queue(async (task: { ticket: Ticket; originWeather: any; destinationWeather: any; callback: (err: any) => void }) => {
-  const { ticket, originWeather, destinationWeather, callback } = task;
+const pgp = pgPromise();
 
+const connectionDetails = {
+  user: 'franckdev',
+  host: 'localhost',
+  database: 'airlines_DB',
+  password: 'prueb@sd3Desarrollo',
+  port: 5432,
+};
+
+const db = pgp(connectionDetails);
+
+export const insertionQueue = async.queue(async (task: { tickets: Ticket[]; originWeather: any[]; destinationWeather: any[]; callback: (err: any) => void }) => {
+  const { tickets, originWeather, destinationWeather, callback } = task;
+  
   try {
-    await processTicketsPool.query(
-      `INSERT INTO weather_reports (ticket_id, origin_temperature, origin_description, destination_temperature, destination_description) 
-           VALUES ($1, $2, $3, $4, $5)`,
-      [
-        ticket.id,
-        originWeather.temp_c,
-        originWeather.condition.text,
-        destinationWeather.temp_c,
-        destinationWeather.condition.text,
-      ]
-    );
+    console.log(`Procesando ${tickets.length} tickets en la cola de inserciones`);
+    console.log(`IDs de tickets: ${tickets.map(ticket => ticket.id).join(', ')}`);
+
+    const records = tickets.map((ticket, index) => {
+      console.log(`Insertando ticket ${ticket.id}`);
+      return {
+        ticket_id: ticket.id,
+        origin_temperature: originWeather[index].temp_c,
+        origin_description: originWeather[index].condition.text,
+        destination_temperature: destinationWeather[index].temp_c,
+        destination_description: destinationWeather[index].condition.text,
+      }
+    });
+
+    const batchSize = 500;
+    const chunks = [];
+    for (let i = 0; i < records.length; i += batchSize) {
+      chunks.push(records.slice(i, i + batchSize));
+    }
+
+    for (const chunk of chunks) {
+      const cs = new pgp.helpers.ColumnSet([
+        'ticket_id',
+        'origin_temperature',
+        'origin_description',
+        'destination_temperature',
+        'destination_description'
+      ], { table: 'weather_reports' });
+
+      const query = pgp.helpers.insert(chunk, cs);
+      await db.none(query);
+    }
+
+    console.log(`Tickets insertados correctamente: ${tickets.map(ticket => ticket.id).join(', ')}`);
     callback(null);
   } catch (error) {
-    console.error(`Error al insertar datos del ticket ${ticket.id} en la base de datos:`, error);
-    callback(error); 
-  }}, 100); // Concurrencia de 100 para las inserciones
-
+    console.error(`Error al insertar datos en la base de datos:`, error);
+    callback(error);
+  }
+}, 10);
 export const getWeather = async (lat: number, lon: number, ticket: Ticket): Promise<CurrentWeatherResponse['current']> => {
   return new Promise((resolve, reject) => {
     weatherQueue.push({
-      lat, lon, callback: (err, result) => {
+      lat,
+      lon,
+      callback: (err, result) => {
         if (err) {
           reject(err);
         } else {
-          // Agregar la tarea a la cola de inserciones después de obtener los datos del clima
-          insertionQueue.push({ ticket, originWeather: result, destinationWeather: result, callback: (err) => {
-            if (err) {
-              console.error('Error en la cola de inserciones:', err);
-            } 
-          }});
+          insertionQueue.push({
+            tickets: [ticket],
+            originWeather: [result],
+            destinationWeather: [result], 
+            callback: (err) => {
+              if (err) {
+                console.error('Error en la cola de inserciones:', err);
+              }
+            }
+          });
           resolve(result);
         }
       }
@@ -51,12 +90,11 @@ export const getWeather = async (lat: number, lon: number, ticket: Ticket): Prom
 };
 
 export const getWeatherFromAPI = async (lat: number, lon: number): Promise<CurrentWeatherResponse['current']> => {
-
   const operation = retry.operation({
-    retries: 5, // Número máximo de reintentos
-    factor: 2, // Factor de retraso exponencial
-    minTimeout: 1000, // Tiempo mínimo de espera entre reintentos (1 segundo)
-    maxTimeout: 60000, // Tiempo máximo de espera entre reintentos (1 minuto)
+    retries: 5,
+    factor: 2,
+    minTimeout: 1000,
+    maxTimeout: 60000,
   });
 
   return new Promise((resolve, reject) => {
@@ -68,7 +106,7 @@ export const getWeatherFromAPI = async (lat: number, lon: number): Promise<Curre
 
         if (cachedWeather) {
           console.log(`Cache hit for ${cacheKey}`);
-          return resolve(JSON.parse(cachedWeather)); // Resolver la promesa si hay caché
+          return resolve(JSON.parse(cachedWeather));
         }
 
         console.log(`Cache miss for ${cacheKey}`);
@@ -77,7 +115,7 @@ export const getWeatherFromAPI = async (lat: number, lon: number): Promise<Curre
           'http://api.weatherapi.com/v1/current.json',
           {
             params: {
-              key: '0345cb230f4944b0975172841241910', //API key de WeatherAPI
+              key: '0345cb230f4944b0975172841241910',
               q: `${lat},${lon}`,
             },
             httpsAgent: new https.Agent({ keepAlive: true, family: 4 }),
@@ -85,14 +123,12 @@ export const getWeatherFromAPI = async (lat: number, lon: number): Promise<Curre
         );
 
         const weatherData = response.data.current;
+        await redisClient.setEx(cacheKey, 1800, JSON.stringify(weatherData));
 
-        await redisClient.setEx(cacheKey, 3600, JSON.stringify(weatherData));
-
-        resolve(weatherData); // Resolver la promesa con los datos del clima
+        resolve(weatherData);
       } catch (error: any) {
         console.error("Error completo:", error);
         if (axios.isAxiosError(error) && error.response) {
-          // Manejo de errores de la API de WeatherAPI
           const apiError: WeatherAPIError = error.response.data;
           switch (apiError.code) {
             case 1002:
@@ -115,11 +151,12 @@ export const getWeatherFromAPI = async (lat: number, lon: number): Promise<Curre
               console.error('Error interno del servidor:', apiError.message);
               break;
             default:
-              // Reintentar si el error es 503 (Service Unavailable)
-              if (error.response.status === 503) {
-                console.log(`Intento ${currentAttempt} fallido. Reintentando...`);
+              if (error.response.status === 503 || error.response.status === 429) {
+                const retryAfter = error.response.headers['retry-after'];
+                const retryDelay = retryAfter ? parseInt(retryAfter) * 1000 : 1000;
+                console.log(`Intento ${currentAttempt} fallido. Reintentando en ${retryDelay / 1000} segundos...`);
                 if (operation.retry(error)) {
-                  return; // Salir del intento actual y esperar el reintento
+                  return;
                 }
               }
               console.error('Error desconocido:', apiError);
@@ -127,7 +164,7 @@ export const getWeatherFromAPI = async (lat: number, lon: number): Promise<Curre
         } else {
           console.error('Error no relacionado con Axios', error);
         }
-        reject(error); // Rechazar la promesa si hay un error no recuperable
+        reject(error);
       }
     });
   });

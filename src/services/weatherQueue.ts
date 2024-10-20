@@ -2,7 +2,6 @@ import async from 'async';
 import axios from 'axios';
 import { getWeatherFromAPI } from './weather_service';
 
-// Cola para las peticiones a la API de WeatherAPI
 const weatherQueue = async.queue(async (task: { lat: number; lon: number; callback: (err: any, result: any) => void }) => {
   const { lat, lon, callback } = task;
 
@@ -10,7 +9,6 @@ const weatherQueue = async.queue(async (task: { lat: number; lon: number; callba
     const weather = await getWeatherFromAPI(lat, lon);
     callback(null, weather);
   } catch (error) {
-    // Reintentar la tarea si es un error 429 (Too Many Requests)
     if (axios.isAxiosError(error) && error.response && error.response.status === 429) {
       const retryAfter = error.response.headers['retry-after'];
       const retryDelay = retryAfter ? parseInt(retryAfter) * 1000 : 1000;
@@ -23,6 +21,6 @@ const weatherQueue = async.queue(async (task: { lat: number; lon: number; callba
       callback(error, null);
     }
   }
-}, 500);
+}, 100);
 
 export default weatherQueue;
