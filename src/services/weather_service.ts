@@ -2,7 +2,6 @@ import axios from 'axios';
 import connectToRedis from '../redisdb';
 import { CurrentWeatherResponse, WeatherAPIError, BadRequestError, UnauthorizedError, ForbiddenError, Ticket, InternalServerError } from '../types';
 import https from 'https';
-//import weatherQueue from './weatherQueue';
 import async from 'async';
 import retry from 'retry';
 import pgPromise from 'pg-promise';
@@ -148,29 +147,3 @@ export const getWeatherFromAPI = async (lat: number, lon: number): Promise<Curre
     });
   });
 };
-
-// export const getWeather = async (lat: number, lon: number, ticket: Ticket): Promise<CurrentWeatherResponse['current']> => {
-//   return new Promise((resolve, reject) => {
-//     weatherQueue.push({
-//       lat,
-//       lon,
-//       callback: (err, result) => {
-//         if (err) {
-//           reject(err);
-//         } else {
-//           insertionQueue.push({
-//             tickets: [ticket],
-//             originWeather: [result],
-//             destinationWeather: [result], 
-//             callback: (err) => {
-//               if (err) {
-//                 console.error('Error en la cola de inserciones:', err);
-//               }
-//             }
-//           });
-//           resolve(result);
-//         }
-//       }
-//     });
-//   });
-// };

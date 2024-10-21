@@ -6,7 +6,7 @@ const connectToRedis = async () => {
       host: 'localhost',
       port: 6379,
     },
-    password: process.env.REDIS_PASSWORD // O usa process.env.REDIS_PASSWORD
+    password: process.env.REDIS_PASSWORD 
   });
 
   redisClient.on('error', (err) => {
