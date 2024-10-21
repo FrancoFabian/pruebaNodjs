@@ -1,8 +1,8 @@
 import axios from 'axios';
 import connectToRedis from '../redisdb';
-import { CurrentWeatherResponse, WeatherAPIError, BadRequestError, UnauthorizedError, ForbiddenError, Ticket } from '../types';
+import { CurrentWeatherResponse, WeatherAPIError, BadRequestError, UnauthorizedError, ForbiddenError, Ticket, InternalServerError } from '../types';
 import https from 'https';
-import weatherQueue from './weatherQueue';
+//import weatherQueue from './weatherQueue';
 import async from 'async';
 import retry from 'retry';
 import pgPromise from 'pg-promise';
@@ -63,31 +63,6 @@ export const insertionQueue = async.queue(async (task: { tickets: Ticket[]; orig
     callback(error);
   }
 }, 10);
-export const getWeather = async (lat: number, lon: number, ticket: Ticket): Promise<CurrentWeatherResponse['current']> => {
-  return new Promise((resolve, reject) => {
-    weatherQueue.push({
-      lat,
-      lon,
-      callback: (err, result) => {
-        if (err) {
-          reject(err);
-        } else {
-          insertionQueue.push({
-            tickets: [ticket],
-            originWeather: [result],
-            destinationWeather: [result], 
-            callback: (err) => {
-              if (err) {
-                console.error('Error en la cola de inserciones:', err);
-              }
-            }
-          });
-          resolve(result);
-        }
-      }
-    });
-  });
-};
 
 export const getWeatherFromAPI = async (lat: number, lon: number): Promise<CurrentWeatherResponse['current']> => {
   const operation = retry.operation({
@@ -105,11 +80,11 @@ export const getWeatherFromAPI = async (lat: number, lon: number): Promise<Curre
         const cachedWeather = await redisClient.get(cacheKey);
 
         if (cachedWeather) {
-          console.log(`Cache hit for ${cacheKey}`);
+          console.log(`Acierto de cache para: ${cacheKey}`);
           return resolve(JSON.parse(cachedWeather));
         }
 
-        console.log(`Cache miss for ${cacheKey}`);
+        console.log(`Fallo de cache para: ${cacheKey}`);
 
         const response = await axios.get<CurrentWeatherResponse>(
           'http://api.weatherapi.com/v1/current.json',
@@ -134,6 +109,7 @@ export const getWeatherFromAPI = async (lat: number, lon: number): Promise<Curre
             case 1002:
             case 2006:
               console.error('Error de autenticación:', (apiError as UnauthorizedError).message);
+              reject(apiError as UnauthorizedError); // Reject with specific error type
               break;
             case 1003:
             case 1005:
@@ -141,14 +117,17 @@ export const getWeatherFromAPI = async (lat: number, lon: number): Promise<Curre
             case 9000:
             case 9001:
               console.error('Error en la solicitud:', (apiError as BadRequestError).message);
+              reject(apiError as BadRequestError); // Reject with specific error type
               break;
             case 2007:
             case 2008:
             case 2009:
               console.error('Error de acceso:', (apiError as ForbiddenError).message);
+              reject(apiError as ForbiddenError); // Reject with specific error type
               break;
             case 9999:
-              console.error('Error interno del servidor:', apiError.message);
+              console.error('Error interno del servidor:', (apiError as InternalServerError).message);
+              reject(apiError as InternalServerError); // Reject with specific error type
               break;
             default:
               if (error.response.status === 503 || error.response.status === 429) {
@@ -169,3 +148,29 @@ export const getWeatherFromAPI = async (lat: number, lon: number): Promise<Curre
     });
   });
 };
+
+// export const getWeather = async (lat: number, lon: number, ticket: Ticket): Promise<CurrentWeatherResponse['current']> => {
+//   return new Promise((resolve, reject) => {
+//     weatherQueue.push({
+//       lat,
+//       lon,
+//       callback: (err, result) => {
+//         if (err) {
+//           reject(err);
+//         } else {
+//           insertionQueue.push({
+//             tickets: [ticket],
+//             originWeather: [result],
+//             destinationWeather: [result], 
+//             callback: (err) => {
+//               if (err) {
+//                 console.error('Error en la cola de inserciones:', err);
+//               }
+//             }
+//           });
+//           resolve(result);
+//         }
+//       }
+//     });
+//   });
+// };
