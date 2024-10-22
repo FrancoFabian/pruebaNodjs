@@ -65,7 +65,6 @@ export interface CurrentWeatherResponse {
     uv: number;
     gust_mph: number;
     gust_kph: number;
-    // ... otros campos que desees incluir ...
   }
   
   // Interfaz para la condición del clima

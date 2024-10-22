@@ -1,6 +1,7 @@
 import { processTicketsPool } from '../db';
-import { getWeatherFromAPI, insertionQueue } from './weather_service';
+import { getWeatherFromAPI} from './weather_service';
 import { Ticket } from '../types';
+import { insertionQueue } from './insertion_service';
 
 export const processTickets = async () => {
   try {
